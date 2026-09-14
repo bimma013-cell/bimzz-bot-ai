@@ -1,24 +1,25 @@
 """
 BIMZZ STORE AI BOT
 Telegram Bot dengan AI (Groq) + Firebase REST API
-Gak butuh service account!
 """
 
 import os
 import json
 import logging
 import requests
+import threading
+from http.server import HTTPServer, BaseHTTPRequestHandler
 from datetime import datetime
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 
 # ============================================================
-# KONFIGURASI
+# KONFIGURASI (dari Environment Variable atau fallback)
 # ============================================================
-TELEGRAM_TOKEN = "8746718198:AAGsieaMiKkarPirHR8Aztg2aqxNV7F4YVo"
-GROQ_API_KEY = "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"
-ADMIN_TELEGRAM_ID = "8138527737"
-FIREBASE_DB_URL = "https://bimzz-store-default-rtdb.asia-southeast1.firebasedatabase.app"
+TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN", "8746718198:AAGsieaMiKkarPirHR8Aztg2aqxNV7F4YVo")
+GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "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")
+ADMIN_TELEGRAM_ID = os.environ.get("ADMIN_TELEGRAM_ID", "8138527737")
+FIREBASE_DB_URL = os.environ.get("FIREBASE_DB_URL", "https://bimzz-store-default-rtdb.asia-southeast1.firebasedatabase.app")
 
 GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions"
 GROQ_MODEL = "llama-3.1-8b-instant"
@@ -31,6 +32,30 @@ logging.basicConfig(
     level=logging.INFO
 )
 logger = logging.getLogger(__name__)
+
+# ============================================================
+# DUMMY HTTP SERVER (buat Render/Koyeb yang butuh port)
+# ============================================================
+class DummyHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.send_header('Content-type', 'text/plain')
+        self.end_headers()
+        self.wfile.write(b'BIMZZ Store AI Bot is running!')
+    def log_message(self, format, *args):
+        pass
+
+def run_dummy_server():
+    port = int(os.environ.get('PORT', 8080))
+    try:
+        server = HTTPServer(('0.0.0.0', port), DummyHandler)
+        logger.info(f'✅ Dummy HTTP server running on port {port}')
+        server.serve_forever()
+    except Exception as e:
+        logger.warning(f'Dummy server error: {e}')
+
+# Start dummy server (biar compatible hosting yg butuh port)
+threading.Thread(target=run_dummy_server, daemon=True).start()
 
 # ============================================================
 # SYSTEM PROMPT AI
@@ -78,7 +103,6 @@ def add_to_history(user_id, role, content):
 # FIREBASE REST API
 # ============================================================
 def firebase_get(path):
-    """Ambil data dari Firebase via REST API"""
     try:
         url = f"{FIREBASE_DB_URL}/{path}.json"
         response = requests.get(url, timeout=10)
@@ -91,7 +115,6 @@ def firebase_get(path):
         return None
 
 def get_products():
-    """Ambil list produk dari Firebase"""
     data = firebase_get('products')
     if not data:
         return []
@@ -102,7 +125,6 @@ def get_products():
     return products
 
 def get_promo_codes():
-    """Ambil kode promo aktif"""
     data = firebase_get('promo')
     if not data:
         return []
@@ -116,7 +138,6 @@ def get_promo_codes():
 # GROQ API
 # ============================================================
 def call_groq(user_id, user_message):
-    """Panggil Groq API dengan history chat"""
     history = get_user_history(user_id)
     history.append({"role": "user", "content": user_message})
     
@@ -164,7 +185,7 @@ def call_groq(user_id, user_message):
         return "Maaf kak, AI lagi error 😔 Coba chat admin langsung ya: @BIMZZZZZZZZZZZZ"
 
 # ============================================================
-# HANDLERS - COMMANDS
+# HANDLERS
 # ============================================================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
@@ -277,9 +298,6 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 Langsung ketik aja, saya jawab otomatis! 🤖"""
     await update.message.reply_text(msg, parse_mode='Markdown')
 
-# ============================================================
-# HANDLER PESAN BIASA
-# ============================================================
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     user_id = user.id
@@ -316,7 +334,6 @@ def main():
     logger.info("🤖 Starting BIMZZ Store AI Bot...")
     logger.info(f"Firebase URL: {FIREBASE_DB_URL}")
     
-    # Test koneksi Firebase
     test = firebase_get('products')
     if test is not None:
         logger.info(f"✅ Firebase connected! Products: {len(test) if test else 0}")
