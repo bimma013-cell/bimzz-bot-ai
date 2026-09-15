@@ -14,12 +14,15 @@ from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 
 # ============================================================
-# KONFIGURASI (dari Environment Variable atau fallback)
+# KONFIGURASI
 # ============================================================
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN", "8746718198:AAGsieaMiKkarPirHR8Aztg2aqxNV7F4YVo")
 GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "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")
 ADMIN_TELEGRAM_ID = os.environ.get("ADMIN_TELEGRAM_ID", "8138527737")
 FIREBASE_DB_URL = os.environ.get("FIREBASE_DB_URL", "https://bimzz-store-default-rtdb.asia-southeast1.firebasedatabase.app")
+
+# LINK WEB BARU
+WEB_STORE_URL = "https://bimzz-storegacorr.vercel.app/"
 
 GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions"
 GROQ_MODEL = "llama-3.1-8b-instant"
@@ -34,7 +37,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # ============================================================
-# DUMMY HTTP SERVER (buat Render/Koyeb yang butuh port)
+# DUMMY HTTP SERVER
 # ============================================================
 class DummyHandler(BaseHTTPRequestHandler):
     def do_GET(self):
@@ -54,7 +57,6 @@ def run_dummy_server():
     except Exception as e:
         logger.warning(f'Dummy server error: {e}')
 
-# Start dummy server (biar compatible hosting yg butuh port)
 threading.Thread(target=run_dummy_server, daemon=True).start()
 
 # ============================================================
@@ -69,7 +71,7 @@ PERSONALITY:
 - Gak pernah bohong soal produk
 
 CARA ORDER:
-1. Buka web: tangerine-tapioca-834916.netlify.app
+1. Buka web: https://bimzz-storegacorr.vercel.app/
 2. Pilih produk & paket
 3. Bayar pake QRIS
 4. Upload bukti + nomor WA
@@ -81,6 +83,12 @@ ATURAN:
 - Bales chat dengan SINGKAT (max 3-4 baris)
 - Pake emoji secukupnya
 - Kalo gak tau jawabannya, bilang "Sabar ya kak, saya forward ke admin dulu"
+
+KELEBIHAN PRODUK KAMI:
+- Anti virus / anti detect
+- Update rutin
+- Support 24/7
+- Garansi 1 minggu kalo gak work
 """
 
 # ============================================================
@@ -206,7 +214,7 @@ Langsung chat aja, saya jawab otomatis! 😊
 👤 @BIMZZZZZZZZZZZZ"""
     
     keyboard = [
-        [InlineKeyboardButton("🛒 Lihat Produk", url="https://tangerine-tapioca-834916.netlify.app")],
+        [InlineKeyboardButton("🛒 Lihat Produk", url=WEB_STORE_URL)],
         [InlineKeyboardButton("💬 Chat Admin", url="https://t.me/BIMZZZZZZZZZZZZ")]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
@@ -241,9 +249,9 @@ async def produk(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     pass
         msg += "\n"
     
-    msg += "Mau order? Langsung aja:\n👉 https://tangerine-tapioca-834916.netlify.app"
+    msg += f"Mau order? Langsung aja:\n👉 {WEB_STORE_URL}"
     
-    keyboard = [[InlineKeyboardButton("🛒 Order Sekarang", url="https://tangerine-tapioca-834916.netlify.app")]]
+    keyboard = [[InlineKeyboardButton("🛒 Order Sekarang", url=WEB_STORE_URL)]]
     reply_markup = InlineKeyboardMarkup(keyboard)
     await update.message.reply_text(msg, parse_mode='Markdown', reply_markup=reply_markup)
 
@@ -333,6 +341,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 def main():
     logger.info("🤖 Starting BIMZZ Store AI Bot...")
     logger.info(f"Firebase URL: {FIREBASE_DB_URL}")
+    logger.info(f"Web Store: {WEB_STORE_URL}")
     
     test = firebase_get('products')
     if test is not None:
