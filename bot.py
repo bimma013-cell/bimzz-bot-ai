@@ -23,7 +23,7 @@ ADMIN_TELEGRAM_ID = os.environ.get("ADMIN_TELEGRAM_ID", "8138527737")
 FIREBASE_DB_URL = os.environ.get("FIREBASE_DB_URL", "https://bimzz-store-default-rtdb.asia-southeast1.firebasedatabase.app")
 
 # Default Web Store URL (bakal di-override dari Firebase settings/links)
-WEB_STORE_URL = "https://bimzz-storegacorr.vercel.app/"
+WEB_STORE_URL = "https://bimzz-store-tipextr.vercel.app/"
 
 GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions"
 GROQ_MODEL = "llama-3.1-8b-instant"
