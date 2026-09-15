@@ -1,6 +1,7 @@
 """
 BIMZZ STORE AI BOT
 Telegram Bot dengan AI (Groq) + Firebase REST API
+Handle 4 Tombol Notif Order
 """
 
 import os
@@ -11,7 +12,7 @@ import threading
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from datetime import datetime
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
+from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters, ContextTypes
 
 # ============================================================
 # KONFIGURASI
@@ -21,7 +22,7 @@ GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "gsk_8FwlbCSVw58I5g46JhepWGdyb3FYA
 ADMIN_TELEGRAM_ID = os.environ.get("ADMIN_TELEGRAM_ID", "8138527737")
 FIREBASE_DB_URL = os.environ.get("FIREBASE_DB_URL", "https://bimzz-store-default-rtdb.asia-southeast1.firebasedatabase.app")
 
-# LINK WEB BARU
+# Default Web Store URL (bakal di-override dari Firebase settings/links)
 WEB_STORE_URL = "https://bimzz-storegacorr.vercel.app/"
 
 GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions"
@@ -37,7 +38,63 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # ============================================================
-# DUMMY HTTP SERVER
+# FUNGSI FIREBASE REST
+# ============================================================
+def firebase_get(path):
+    try:
+        url = f"{FIREBASE_DB_URL}/{path}.json"
+        response = requests.get(url, timeout=10)
+        if response.status_code == 200:
+            return response.json()
+        return None
+    except Exception as e:
+        logger.error(f"Firebase GET error: {e}")
+        return None
+
+def firebase_set(path, data):
+    try:
+        url = f"{FIREBASE_DB_URL}/{path}.json"
+        response = requests.put(url, json=data, timeout=10)
+        return response.status_code == 200
+    except Exception as e:
+        logger.error(f"Firebase SET error: {e}")
+        return False
+
+def get_web_store_url():
+    """Ambil link web dari Firebase settings"""
+    data = firebase_get("settings/links/web")
+    if data and isinstance(data, str):
+        return data
+    return WEB_STORE_URL
+
+def get_products():
+    data = firebase_get('products')
+    if not data:
+        return []
+    products = []
+    for key, val in data.items():
+        if isinstance(val, dict):
+            products.append(val)
+    return products
+
+def get_promo_codes():
+    data = firebase_get('promo')
+    if not data:
+        return []
+    promos = []
+    for key, val in data.items():
+        if isinstance(val, dict) and val.get('active'):
+            promos.append(val)
+    return promos
+
+def get_order(order_id):
+    return firebase_get(f'orders/{order_id}')
+
+def update_order_status(order_id, status):
+    return firebase_set(f'orders/{order_id}/status', status)
+
+# ============================================================
+# DUMMY HTTP SERVER (buat Render/Koyeb yang butuh port)
 # ============================================================
 class DummyHandler(BaseHTTPRequestHandler):
     def do_GET(self):
@@ -62,7 +119,9 @@ threading.Thread(target=run_dummy_server, daemon=True).start()
 # ============================================================
 # SYSTEM PROMPT AI
 # ============================================================
-SYSTEM_PROMPT = """Kamu adalah CS (Customer Service) dari BIMZZ STORE, toko jual APK BUG/RAT premium.
+def get_system_prompt():
+    web_url = get_web_store_url()
+    return f"""Kamu adalah CS (Customer Service) dari BIMZZ STORE, toko jual APK BUG/RAT premium.
 
 PERSONALITY:
 - Ramah, sopan, tapi santai (pake bahasa gaul Indonesia)
@@ -71,7 +130,7 @@ PERSONALITY:
 - Gak pernah bohong soal produk
 
 CARA ORDER:
-1. Buka web: https://bimzz-storegacorr.vercel.app/
+1. Buka web: {web_url}
 2. Pilih produk & paket
 3. Bayar pake QRIS
 4. Upload bukti + nomor WA
@@ -108,42 +167,7 @@ def add_to_history(user_id, role, content):
         user_histories[user_id] = history[-20:]
 
 # ============================================================
-# FIREBASE REST API
-# ============================================================
-def firebase_get(path):
-    try:
-        url = f"{FIREBASE_DB_URL}/{path}.json"
-        response = requests.get(url, timeout=10)
-        if response.status_code == 200:
-            return response.json()
-        logger.warning(f"Firebase GET {path}: status {response.status_code}")
-        return None
-    except Exception as e:
-        logger.error(f"Firebase GET error: {e}")
-        return None
-
-def get_products():
-    data = firebase_get('products')
-    if not data:
-        return []
-    products = []
-    for key, val in data.items():
-        if isinstance(val, dict):
-            products.append(val)
-    return products
-
-def get_promo_codes():
-    data = firebase_get('promo')
-    if not data:
-        return []
-    promos = []
-    for key, val in data.items():
-        if isinstance(val, dict) and val.get('active'):
-            promos.append(val)
-    return promos
-
-# ============================================================
-# GROQ API
+# GROQ API CALL
 # ============================================================
 def call_groq(user_id, user_message):
     history = get_user_history(user_id)
@@ -173,7 +197,7 @@ def call_groq(user_id, user_message):
     payload = {
         "model": GROQ_MODEL,
         "messages": [
-            {"role": "system", "content": SYSTEM_PROMPT + products_text},
+            {"role": "system", "content": get_system_prompt() + products_text},
             *history
         ],
         "temperature": 0.7,
@@ -193,10 +217,11 @@ def call_groq(user_id, user_message):
         return "Maaf kak, AI lagi error 😔 Coba chat admin langsung ya: @BIMZZZZZZZZZZZZ"
 
 # ============================================================
-# HANDLERS
+# HANDLERS - COMMANDS
 # ============================================================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
+    web_url = get_web_store_url()
     welcome_msg = f"""Halo {user.first_name}! 👋
 
 Selamat datang di *BIMZZ STORE AI* 🤖
@@ -214,7 +239,7 @@ Langsung chat aja, saya jawab otomatis! 😊
 👤 @BIMZZZZZZZZZZZZ"""
     
     keyboard = [
-        [InlineKeyboardButton("🛒 Lihat Produk", url=WEB_STORE_URL)],
+        [InlineKeyboardButton("🛒 Lihat Produk", url=web_url)],
         [InlineKeyboardButton("💬 Chat Admin", url="https://t.me/BIMZZZZZZZZZZZZ")]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
@@ -249,9 +274,10 @@ async def produk(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     pass
         msg += "\n"
     
-    msg += f"Mau order? Langsung aja:\n👉 {WEB_STORE_URL}"
+    web_url = get_web_store_url()
+    msg += f"Mau order? Langsung aja:\n👉 {web_url}"
     
-    keyboard = [[InlineKeyboardButton("🛒 Order Sekarang", url=WEB_STORE_URL)]]
+    keyboard = [[InlineKeyboardButton("🛒 Order Sekarang", url=web_url)]]
     reply_markup = InlineKeyboardMarkup(keyboard)
     await update.message.reply_text(msg, parse_mode='Markdown', reply_markup=reply_markup)
 
@@ -306,6 +332,122 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 Langsung ketik aja, saya jawab otomatis! 🤖"""
     await update.message.reply_text(msg, parse_mode='Markdown')
 
+# ============================================================
+# HANDLER CALLBACK - 4 TOMBOL NOTIF ORDER
+# ============================================================
+async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle klik tombol dari notif order"""
+    query = update.callback_query
+    await query.answer()
+    
+    data = query.data
+    
+    if '_' not in data:
+        return
+    
+    action, order_id = data.split('_', 1)
+    
+    logger.info(f"Callback: action={action}, order={order_id}")
+    
+    # ===== TOMBOL 1: DANA MASUK =====
+    if action == 'paid':
+        try:
+            update_order_status(order_id, "paid")
+            order_data = get_order(order_id)
+            
+            if order_data:
+                # Notif ke LO
+                notif_owner = (
+                    f"✅ *ORDER DIKONFIRMASI - DANA MASUK*\n\n"
+                    f"🆔 Order ID: `{order_id}`\n"
+                    f"👤 Username: `{order_data.get('username', '')}`\n"
+                    f"💰 Total: Rp {int(order_data.get('total', 0)):,}\n\n"
+                    f"📱 Target bakal dapet link download di web!\n"
+                    f"⏱️ Auto-refresh 10 detik"
+                )
+                
+                await context.bot.send_message(
+                    chat_id=ADMIN_TELEGRAM_ID,
+                    text=notif_owner,
+                    parse_mode='Markdown'
+                )
+            
+            await query.edit_message_text(
+                text=query.message.text + "\n\n━━━━━━━━━━━━━━━━━━━━\n✅ *STATUS: DANA MASUK*\n📱 Target dapet link download di web!",
+                parse_mode='Markdown',
+                reply_markup=query.message.reply_markup
+            )
+        except Exception as e:
+            logger.error(f"Error paid: {e}")
+            await query.answer(f"Error: {str(e)[:100]}")
+    
+    # ===== TOMBOL 2: BELUM MASUK =====
+    elif action == 'pending':
+        try:
+            update_order_status(order_id, "pending")
+            
+            await query.edit_message_text(
+                text=query.message.text + "\n\n━━━━━━━━━━━━━━━━━━━━\n⏳ *STATUS: BELUM MASUK*\n📱 Target nunggu konfirmasi!",
+                parse_mode='Markdown',
+                reply_markup=query.message.reply_markup
+            )
+        except Exception as e:
+            logger.error(f"Error pending: {e}")
+            await query.answer(f"Error: {str(e)[:100]}")
+    
+    # ===== TOMBOL 4: KIRIM VIA BOT =====
+    elif action == 'sendbot':
+        try:
+            order_data = get_order(order_id)
+            
+            if not order_data:
+                await query.answer("Order gak ketemu!")
+                return
+            
+            wa = order_data.get('wa', '')
+            username = order_data.get('username', '')
+            produk = order_data.get('produk', '')
+            tg_user = order_data.get('telegram', '')
+            
+            web_url = get_web_store_url()
+            
+            pesan_lo = (
+                f"📱 *INFO TARGET - KIRIM VIA BOT*\n\n"
+                f"🆔 Order: `{order_id}`\n"
+                f"👤 Username: `{username}`\n"
+                f"💀 Produk: {produk}\n"
+                f"📱 WA: `{wa}`\n"
+                f"💬 Telegram: {tg_user or '-'}\n\n"
+                f"━━━━━━━━━━━━━━━━━━━━\n"
+                f"*LINK DOWNLOAD:*\n"
+                f"Target login ke web buat download:\n"
+                f"{web_url}\n\n"
+                f"*CHAT VIA WA:*"
+            )
+            
+            wa_text = f"Halo kak {username}, pesanan {produk} udah diproses ya! Silakan login di web buat download: {web_url}"
+            wa_link = f"https://wa.me/{wa}?text={requests.utils.quote(wa_text)}"
+            
+            keyboard = [
+                [InlineKeyboardButton("💬 CHAT VIA WA", url=wa_link)],
+                [InlineKeyboardButton("🛒 BUKA WEB", url=web_url)]
+            ]
+            
+            await context.bot.send_message(
+                chat_id=ADMIN_TELEGRAM_ID,
+                text=pesan_lo,
+                parse_mode='Markdown',
+                reply_markup=InlineKeyboardMarkup(keyboard)
+            )
+            
+            await query.answer("Info target dikirim ke chat lo! ✅")
+        except Exception as e:
+            logger.error(f"Error sendbot: {e}")
+            await query.answer(f"Error: {str(e)[:100]}")
+
+# ============================================================
+# HANDLER PESAN BIASA
+# ============================================================
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     user_id = user.id
@@ -341,7 +483,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 def main():
     logger.info("🤖 Starting BIMZZ Store AI Bot...")
     logger.info(f"Firebase URL: {FIREBASE_DB_URL}")
-    logger.info(f"Web Store: {WEB_STORE_URL}")
     
     test = firebase_get('products')
     if test is not None:
@@ -351,12 +492,18 @@ def main():
     
     app = Application.builder().token(TELEGRAM_TOKEN).build()
     
+    # Commands
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("menu", menu))
     app.add_handler(CommandHandler("produk", produk))
     app.add_handler(CommandHandler("promo", promo))
     app.add_handler(CommandHandler("admin", admin_cmd))
     app.add_handler(CommandHandler("help", help_command))
+    
+    # Callback untuk 4 tombol
+    app.add_handler(CallbackQueryHandler(handle_callback))
+    
+    # Message handler
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     
     logger.info("✅ Bot aktif! Chat di @BIMZZ_Store_AI_bot")
