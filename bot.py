@@ -188,3 +188,467 @@ def run_dummy_server():
         logger.warning(f'Dummy server error: {e}')
 
 threading.Thread(target=run_dummy_server, daemon=True).start()
+# ============================================================
+# SYSTEM PROMPT AI
+# ============================================================
+def get_system_prompt():
+    web_url = get_web_store_url()
+    return f"""Kamu adalah CS (Customer Service) dari BIMZZ STORE, toko jual APK BUG/RAT premium.
+
+PERSONALITY:
+- Ramah, sopan, tapi santai (pake bahasa gaul Indonesia)
+- Suka pake emoji biar chat gak kaku
+- Sabar jawab pertanyaan target
+- Gak pernah bohong soal produk
+
+CARA ORDER:
+1. Via Telegram: Ketik /order → ikutin instruksi
+2. Via Web: {web_url} → login → pilih produk → bayar QRIS
+
+ATURAN:
+- Kalo target mau order, arahin ke /order
+- JANGAN kasih harga diskon tanpa persetujuan admin
+- Kalo target minta bantuan lebih lanjut, arahin ke admin @BIMZZZZZZZZZZZZ
+- Bales chat dengan SINGKAT (max 3-4 baris)
+- Pake emoji secukupnya
+"""
+
+# ============================================================
+# HISTORY CHAT
+# ============================================================
+user_histories = {}
+
+def get_user_history(user_id):
+    if user_id not in user_histories:
+        user_histories[user_id] = []
+    return user_histories[user_id]
+
+def add_to_history(user_id, role, content):
+    history = get_user_history(user_id)
+    history.append({"role": role, "content": content})
+    if len(history) > 20:
+        user_histories[user_id] = history[-20:]
+
+# ============================================================
+# GROQ API
+# ============================================================
+def call_groq(user_id, user_message):
+    if not GROQ_API_KEY:
+        return "Maaf kak, AI lagi error 😔 Coba chat admin langsung ya."
+    
+    history = get_user_history(user_id)
+    history.append({"role": "user", "content": user_message})
+    
+    products = get_products()
+    products_text = ""
+    if products:
+        products_text = "\n\nPRODUK YANG TERSEDIA SAAT INI:\n"
+        for p in products:
+            name = p.get('name', '-')
+            prices = p.get('prices', [])
+            products_text += f"• {name}:\n"
+            for pr in prices:
+                if isinstance(pr, dict):
+                    try:
+                        cost = int(pr.get('cost', 0))
+                        products_text += f"  - {pr.get('duration', '-')}: Rp {cost:,}\n"
+                    except:
+                        pass
+    
+    headers = {
+        "Authorization": f"Bearer {GROQ_API_KEY}",
+        "Content-Type": "application/json"
+    }
+    
+    payload = {
+        "model": GROQ_MODEL,
+        "messages": [
+            {"role": "system", "content": get_system_prompt() + products_text},
+            *history
+        ],
+        "temperature": 0.7,
+        "max_tokens": 500
+    }
+    
+    try:
+        response = requests.post(GROQ_API_URL, headers=headers, json=payload, timeout=30)
+        response.raise_for_status()
+        data = response.json()
+        bot_reply = data['choices'][0]['message']['content']
+        history.append({"role": "assistant", "content": bot_reply})
+        user_histories[user_id] = history[-20:]
+        return bot_reply
+    except Exception as e:
+        logger.error(f"Groq API error: {e}")
+        return "Maaf kak, AI lagi error 😔 Coba chat admin langsung ya: @BIMZZZZZZZZZZZZ"
+
+# ============================================================
+# MENU UTAMA DENGAN BANNER
+# ============================================================
+def get_main_menu():
+    keyboard = [
+        [InlineKeyboardButton("🛒 ORDER SEKARANG", callback_data="menu_order")],
+        [InlineKeyboardButton("📦 LIHAT PRODUK", callback_data="menu_produk"), InlineKeyboardButton("🎫 KODE PROMO", callback_data="menu_promo")],
+        [InlineKeyboardButton("💬 CHAT ADMIN", url="https://wa.me/62895405292836"), InlineKeyboardButton("🌐 BUKA WEB", url=get_web_store_url())],
+        [InlineKeyboardButton("❓ BANTUAN", callback_data="menu_help")]
+    ]
+    return InlineKeyboardMarkup(keyboard)
+
+# ============================================================
+# HANDLER /start DENGAN BANNER
+# ============================================================
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    welcome_msg = f"""Halo {user.first_name}! 👋
+
+Selamat datang di *BIMZZ STORE AI* 🤖
+Toko APK BUG/RAT premium terpercaya!
+
+Saya CS AI yang siap bantu lo:
+🛒 Order via Telegram - GAMPANG!
+📱 Info produk & harga
+🎫 Kode promo
+❓ FAQ
+
+*Klik tombol di bawah buat mulai!* 👇"""
+    
+    try:
+        # Kirim banner + welcome + tombol
+        await update.message.reply_photo(
+            photo=BANNER_URL,
+            caption=welcome_msg,
+            parse_mode='Markdown',
+            reply_markup=get_main_menu()
+        )
+    except Exception as e:
+        logger.warning(f"Gagal kirim banner, kirim text aja: {e}")
+        await update.message.reply_text(welcome_msg, parse_mode='Markdown', reply_markup=get_main_menu())
+
+async def menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    try:
+        await update.message.reply_photo(
+            photo=BANNER_URL,
+            caption="📋 *MENU UTAMA BIMZZ STORE*",
+            parse_mode='Markdown',
+            reply_markup=get_main_menu()
+        )
+    except Exception:
+        await update.message.reply_text("📋 *MENU UTAMA BIMZZ STORE*", parse_mode='Markdown', reply_markup=get_main_menu())
+
+async def produk(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    products = get_products()
+    if not products:
+        await update.message.reply_text("Belum ada produk kak 😔 Coba cek lagi nanti ya!")
+        return
+    
+    msg = "📦 *DAFTAR PRODUK BIMZZ STORE*\n\n"
+    for p in products:
+        msg += f"🔥 *{p.get('name', '-')}*\n"
+        for pr in p.get('prices', []):
+            if isinstance(pr, dict):
+                try:
+                    cost = int(pr.get('cost', 0))
+                    msg += f"   • {pr.get('duration', '-')}: Rp {cost:,}\n"
+                except:
+                    pass
+        msg += "\n"
+    
+    msg += "Mau order? Langsung aja:\n👉 Ketik /order"
+    keyboard = [[InlineKeyboardButton("🛒 ORDER SEKARANG", callback_data="menu_order")]]
+    await update.message.reply_text(msg, parse_mode='Markdown', reply_markup=InlineKeyboardMarkup(keyboard))
+
+async def promo(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    promos = get_promo_codes()
+    if not promos:
+        await update.message.reply_text("Belum ada kode promo aktif kak 😔 Pantengin terus ya!")
+        return
+    
+    msg = "🎫 *KODE PROMO AKTIF*\n\n"
+    for p in promos:
+        code = p.get('code', '-')
+        discount = p.get('discount', 0)
+        dtype = p.get('type', 'percent')
+        slots = p.get('slots', 0)
+        used = len(p.get('usedBy', {}) or {})
+        diskon_text = f"{discount}%" if dtype == 'percent' else f"Rp {discount:,}"
+        msg += f"🎁 *{code}*\n   Diskon: {diskon_text}\n   Slot tersisa: {slots - used}/{slots}\n\n"
+    
+    msg += "Masukin kode pas order ya! 🚀"
+    await update.message.reply_text(msg, parse_mode='Markdown')
+
+async def admin_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text(
+        "👤 *Chat Admin Langsung:*\n\n"
+        "📱 Telegram: @BIMZZZZZZZZZZZZ\n"
+        "💬 WhatsApp: +62 895-4052-92836\n\n"
+        "Kalo urgent, langsung chat aja ya kak! 🔥",
+        parse_mode='Markdown'
+    )
+
+async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    msg = """❓ *BANTUAN*
+
+*Commands:*
+/start - Mulai chat
+/order - Order via Telegram
+/menu - Lihat menu
+/produk - List produk
+/promo - Kode promo
+/admin - Chat admin
+/help - Bantuan ini
+
+*Pertanyaan umum:*
+• "Harga APK X berapa?"
+• "Cara order gimana?"
+• "APK ini work gak?"
+
+Langsung ketik aja, saya jawab otomatis! 🤖"""
+    await update.message.reply_text(msg, parse_mode='Markdown')
+
+# ============================================================
+# ORDER VIA TELEGRAM
+# ============================================================
+async def order_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    
+    products = get_products()
+    if not products:
+        await update.message.reply_text("Maaf kak, produk lagi kosong 😔")
+        return ConversationHandler.END
+    
+    keyboard = []
+    for p in products:
+        keyboard.append([InlineKeyboardButton(f"💀 {p.get('name', '-')}", callback_data=f"order_prod_{p.get('_key')}")])
+    keyboard.append([InlineKeyboardButton("❌ BATAL", callback_data="order_cancel")])
+    
+    await update.message.reply_text(
+        "🛒 *ORDER VIA TELEGRAM*\n\nPilih produk yang mau lo beli:",
+        parse_mode='Markdown',
+        reply_markup=InlineKeyboardMarkup(keyboard)
+    )
+    return PILIH_PRODUK
+
+async def order_pilih_produk(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    
+    if query.data == "order_cancel":
+        await query.edit_message_text("❌ Order dibatalkan.")
+        return ConversationHandler.END
+    
+    if query.data.startswith("order_prod_"):
+        product_key = query.data.replace("order_prod_", "")
+        product = get_product_by_key(product_key)
+        
+        if not product:
+            await query.edit_message_text("❌ Produk gak ketemu!")
+            return ConversationHandler.END
+        
+        user_id = query.from_user.id
+        user_order_state[user_id] = {"product": product, "product_key": product_key}
+        
+        keyboard = []
+        for idx, pr in enumerate(product.get('prices', [])):
+            keyboard.append([InlineKeyboardButton(
+                f"📅 {pr.get('duration', '-')} - Rp {int(pr.get('cost', 0)):,}",
+                callback_data=f"order_price_{idx}"
+            )])
+        keyboard.append([InlineKeyboardButton("❌ BATAL", callback_data="order_cancel")])
+        
+        await query.edit_message_text(
+            f"💀 *{product.get('name', '-')}*\n\nPilih paket:",
+            parse_mode='Markdown',
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+        return PILIH_PAKET
+
+async def order_pilih_paket(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    
+    if query.data == "order_cancel":
+        await query.edit_message_text("❌ Order dibatalkan.")
+        return ConversationHandler.END
+    
+    if query.data.startswith("order_price_"):
+        idx = int(query.data.replace("order_price_", ""))
+        user_id = query.from_user.id
+        
+        if user_id not in user_order_state:
+            await query.edit_message_text("❌ Session expired. Ketik /order lagi.")
+            return ConversationHandler.END
+        
+        product = user_order_state[user_id]["product"]
+        price = product['prices'][idx]
+        user_order_state[user_id]["price"] = price
+        
+        await query.edit_message_text(
+            f"✅ *{product.get('name', '-')}*\n"
+            f"📅 Paket: {price.get('duration', '-')}\n"
+            f"💰 Harga: Rp {int(price.get('cost', 0)):,}\n\n"
+            f"👤 *Masukkan USERNAME* lo (buat dashboard):",
+            parse_mode='Markdown'
+        )
+        return INPUT_USERNAME
+
+async def order_input_username(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    username = update.message.text.strip()
+    
+    if len(username) < 3:
+        await update.message.reply_text("❌ Username minimal 3 huruf! Coba lagi:")
+        return INPUT_USERNAME
+    
+    if user_id not in user_order_state:
+        await update.message.reply_text("❌ Session expired. Ketik /order lagi.")
+        return ConversationHandler.END
+    
+    existing = get_user_by_username(username)
+    if existing:
+        await update.message.reply_text(f"❌ Username *{username}* udah ada! Coba yang lain:", parse_mode='Markdown')
+        return INPUT_USERNAME
+    
+    user_order_state[user_id]["username"] = username
+    await update.message.reply_text(
+        f"✅ Username: *{username}*\n\n🔑 *Masukkan PASSWORD* (min 6 karakter):",
+        parse_mode='Markdown'
+    )
+    return INPUT_PASSWORD
+
+async def order_input_password(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    password = update.message.text.strip()
+    
+    if len(password) < 6:
+        await update.message.reply_text("❌ Password minimal 6 karakter! Coba lagi:")
+        return INPUT_PASSWORD
+    
+    if user_id not in user_order_state:
+        await update.message.reply_text("❌ Session expired. Ketik /order lagi.")
+        return ConversationHandler.END
+    
+    user_order_state[user_id]["password"] = password
+    await update.message.reply_text(
+        "✅ Password OK!\n\n📱 *Masukkan NOMOR WHATSAPP* lo (format 62xxx):",
+        parse_mode='Markdown'
+    )
+    return INPUT_WA
+
+async def order_input_wa(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    wa = update.message.text.strip().replace("-", "").replace(" ", "")
+    
+    if not wa.startswith("62"):
+        await update.message.reply_text("❌ Nomor WA harus diawali *62* (contoh: 6281234567890). Coba lagi:", parse_mode='Markdown')
+        return INPUT_WA
+    
+    if user_id not in user_order_state:
+        await update.message.reply_text("❌ Session expired. Ketik /order lagi.")
+        return ConversationHandler.END
+    
+    user_order_state[user_id]["wa"] = wa
+    
+    qris_url = firebase_get("settings/qris_url") or "https://files.catbox.moe/1wppiv.jpg"
+    
+    await update.message.reply_photo(
+        photo=qris_url,
+        caption=f"💳 *PEMBAYARAN QRIS*\n\n"
+                f"💀 Produk: {user_order_state[user_id]['product'].get('name')}\n"
+                f"📅 Paket: {user_order_state[user_id]['price'].get('duration')}\n"
+                f"💰 Harga: Rp {int(user_order_state[user_id]['price'].get('cost', 0)):,}\n\n"
+                f"📸 *SCAN QRIS DI ATAS, BAYAR, LALU KIRIM FOTO BUKTI PEMBAYARAN DI CHAT INI!*",
+        parse_mode='Markdown'
+    )
+    return UPLOAD_BUKTI
+
+async def order_upload_bukti(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    
+    if user_id not in user_order_state:
+        await update.message.reply_text("❌ Session expired. Ketik /order lagi.")
+        return ConversationHandler.END
+    
+    if not update.message.photo:
+        await update.message.reply_text("❌ Kirim FOTO bukti pembayaran ya (bukan text):")
+        return UPLOAD_BUKTI
+    
+    photo_file_id = update.message.photo[-1].file_id
+    data = user_order_state[user_id]
+    
+    order_id = f"ORD{int(time.time() * 1000)}"
+    user_uid = f"TG{user_id}"
+    
+    create_user(user_uid, data['username'], data['password'], f"{user_id}@telegram.user", "MEMBER", 30)
+    
+    order_data = {
+        "orderId": order_id,
+        "uid": user_uid,
+        "username": data['username'],
+        "password": data['password'],
+        "produk": data['product'].get('name'),
+        "produkId": data['product_key'],
+        "paket": data['price'].get('duration'),
+        "subtotal": data['price'].get('cost'),
+        "diskon": 0,
+        "total": data['price'].get('cost'),
+        "kodePromo": None,
+        "wa": data['wa'],
+        "telegram": f"@{update.effective_user.username}" if update.effective_user.username else "-",
+        "telegram_user_id": user_id,
+        "status": "pending",
+        "via": "telegram",
+        "timestamp": int(time.time() * 1000)
+    }
+    
+    firebase_set(f'orders/{order_id}', order_data)
+    
+    try:
+        admin_keyboard = [
+            [
+                InlineKeyboardButton("✅ DANA MASUK", callback_data=f"paid_{order_id}"),
+                InlineKeyboardButton("⏳ BELUM MASUK", callback_data=f"pending_{order_id}")
+            ],
+            [
+                InlineKeyboardButton("📱 KIRIM APK VIA BOT", callback_data=f"sendapk_{order_id}"),
+                InlineKeyboardButton("❌ HAPUS ORDER", callback_data=f"delorder_{order_id}")
+            ]
+        ]
+        
+        await context.bot.send_photo(
+            chat_id=ADMIN_TELEGRAM_ID,
+            photo=photo_file_id,
+            caption=f"🔔 *PESANAN BARU (VIA TELEGRAM)*\n\n"
+                    f"🆔 Order ID: `{order_id}`\n"
+                    f"👤 Username: `{data['username']}`\n"
+                    f"🔑 Password: `{data['password']}`\n"
+                    f"💀 Produk: {data['product'].get('name')}\n"
+                    f"📅 Paket: {data['price'].get('duration')}\n"
+                    f"💰 Total: Rp {int(data['price'].get('cost', 0)):,}\n"
+                    f"📱 WA: `{data['wa']}`\n"
+                    f"💬 Telegram: @{update.effective_user.username or '-'}\n\n"
+                    f"━━━━━━━━━━━━━━━━━━━━\n"
+                    f"PILIH AKSI:",
+            parse_mode='Markdown',
+            reply_markup=InlineKeyboardMarkup(admin_keyboard)
+        )
+    except Exception as e:
+        logger.error(f"Gagal kirim ke admin: {e}")
+    
+    await update.message.reply_text(
+        f"✅ *PESANAN DITERIMA!*\n\n"
+        f"🆔 Order ID: `{order_id}`\n\n"
+        f"⏳ Tunggu admin verifikasi pembayaran lo ya.\n"
+        f"📱 Kalo dana udah masuk, APK bakal otomatis dikirim ke chat ini!\n\n"
+        f"*Terima kasih udah order di BIMZZ STORE!* 🔥",
+        parse_mode='Markdown'
+    )
+    
+    del user_order_state[user_id]
+    return ConversationHandler.END
+
+async def order_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    if user_id in user_order_state:
+        del user_order_state[user_id]
+    await update.message.reply_text("❌ Order dibatalkan.")
+    return ConversationHandler.END
