@@ -33,7 +33,7 @@ GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions"
 GROQ_MODEL = "llama-3.1-8b-instant"
 
 # BANNER URL - GANTI PAKE LINK CATBOX LO!
-BANNER_URL = "https://files.catbox.moe/1wppiv.jpg"
+BANNER_URL = "https://files.catbox.moe/aydbna.png"
 
 # OWNER KEY
 OWNER_KEY = "BIMZZ STORE"
