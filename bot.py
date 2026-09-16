@@ -637,3 +637,640 @@ async def order_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
         del user_order_state[user_id]
     await update.message.reply_text("❌ Order dibatalkan.")
     return ConversationHandler.END
+    # ============================================================
+# OWNER PANEL VIA BOT
+# ============================================================
+async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    
+    if user_id != ADMIN_TELEGRAM_ID:
+        await update.message.reply_text("❌ Lo bukan Owner!")
+        return
+    
+    keyboard = [
+        [InlineKeyboardButton("📦 KELOLA PRODUK", callback_data="adm_produk")],
+        [InlineKeyboardButton("👥 KELOLA USER", callback_data="adm_user")],
+        [InlineKeyboardButton("📊 STATISTIK", callback_data="adm_stats")],
+        [InlineKeyboardButton("🔧 MAINTENANCE", callback_data="adm_maintenance")],
+        [InlineKeyboardButton("🚫 WEB OFF", callback_data="adm_weboff")],
+        [InlineKeyboardButton("🎫 KELOLA PROMO", callback_data="adm_promo")],
+        [InlineKeyboardButton("📸 GANTI QRIS", callback_data="adm_qris")],
+        [InlineKeyboardButton("❌ TUTUP", callback_data="adm_close")]
+    ]
+    
+    stats = get_stats()
+    await update.message.reply_text(
+        f"👑 *OWNER PANEL - BIMZZ STORE*\n\n"
+        f"📦 Total Produk: {stats['products']}\n"
+        f"👥 Total User: {stats['users']}\n"
+        f"🛒 Total Order: {stats['orders']}\n"
+        f"⭐ Total Ulasan: {stats['reviews']}\n\n"
+        f"PILIH MENU:",
+        parse_mode='Markdown',
+        reply_markup=InlineKeyboardMarkup(keyboard)
+    )
+
+def get_stats():
+    products = firebase_get('products') or {}
+    users = firebase_get('users') or {}
+    orders = firebase_get('orders') or {}
+    reviews = firebase_get('ulasan') or {}
+    return {
+        'products': len(products) if isinstance(products, dict) else 0,
+        'users': len(users) if isinstance(users, dict) else 0,
+        'orders': len(orders) if isinstance(orders, dict) else 0,
+        'reviews': len(reviews) if isinstance(reviews, dict) else 0
+    }
+
+async def admin_produk(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    
+    if query.from_user.id != ADMIN_TELEGRAM_ID:
+        return
+    
+    products = get_products()
+    keyboard = []
+    
+    for p in products:
+        keyboard.append([InlineKeyboardButton(
+            f"💀 {p.get('name', '-')}",
+            callback_data=f"adm_viewprod_{p.get('_key')}"
+        )])
+    
+    keyboard.append([InlineKeyboardButton("➕ TAMBAH PRODUK", callback_data="adm_addprod")])
+    keyboard.append([InlineKeyboardButton("⬅️ KEMBALI", callback_data="adm_back")])
+    
+    await query.edit_message_text(
+        f"📦 *KELOLA PRODUK*\n\nTotal: {len(products)} produk",
+        parse_mode='Markdown',
+        reply_markup=InlineKeyboardMarkup(keyboard)
+    )
+
+async def admin_view_produk(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    
+    if query.from_user.id != ADMIN_TELEGRAM_ID:
+        return
+    
+    product_key = query.data.replace("adm_viewprod_", "")
+    product = get_product_by_key(product_key)
+    
+    if not product:
+        await query.edit_message_text("❌ Produk gak ketemu!")
+        return
+    
+    prices_text = ""
+    for pr in product.get('prices', []):
+        prices_text += f"   • {pr.get('duration')}: Rp {int(pr.get('cost', 0)):,}\n"
+    
+    keyboard = [
+        [InlineKeyboardButton("✏️ EDIT HARGA", callback_data=f"adm_editprice_{product_key}")],
+        [InlineKeyboardButton("📥 GANTI APK", callback_data=f"adm_editapk_{product_key}")],
+        [InlineKeyboardButton("🗑️ HAPUS PRODUK", callback_data=f"adm_delprod_{product_key}")],
+        [InlineKeyboardButton("⬅️ KEMBALI", callback_data="adm_produk")]
+    ]
+    
+    await query.edit_message_text(
+        f"💀 *{product.get('name', '-')}*\n\n"
+        f"📝 Fitur:\n{product.get('features', '-')}\n\n"
+        f"💰 Harga:\n{prices_text}\n"
+        f"📥 APK: {product.get('apkLink', '-')}\n",
+        parse_mode='Markdown',
+        reply_markup=InlineKeyboardMarkup(keyboard)
+    )
+
+async def admin_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    
+    if query.from_user.id != ADMIN_TELEGRAM_ID:
+        return
+    
+    users = firebase_get('users') or {}
+    
+    await query.edit_message_text(
+        f"👥 *KELOLA USER*\n\n"
+        f"Total: {len(users)} user\n\n"
+        f"Buka web buat kelola user lengkap:\n"
+        f"{get_web_store_url()}",
+        parse_mode='Markdown',
+        reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton("🌐 BUKA WEB", url=get_web_store_url())],
+            [InlineKeyboardButton("⬅️ KEMBALI", callback_data="adm_back")]
+        ])
+    )
+
+async def admin_maintenance(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    
+    if query.from_user.id != ADMIN_TELEGRAM_ID:
+        return
+    
+    current = firebase_get("settings/maintenance") or False
+    
+    keyboard = [
+        [InlineKeyboardButton(
+            "🔴 MATIKAN" if current else "🟢 AKTIFKAN",
+            callback_data="adm_toggle_maint"
+        )],
+        [InlineKeyboardButton("⬅️ KEMBALI", callback_data="adm_back")]
+    ]
+    
+    await query.edit_message_text(
+        f"🔧 *MODE MAINTENANCE*\n\n"
+        f"Status: *{'ON' if current else 'OFF'}*\n\n"
+        f"Kalo ON, web bakal nampilin halaman Maintenance.\n"
+        f"Owner tetep bisa akses.",
+        parse_mode='Markdown',
+        reply_markup=InlineKeyboardMarkup(keyboard)
+    )
+
+async def admin_weboff(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    
+    if query.from_user.id != ADMIN_TELEGRAM_ID:
+        return
+    
+    current = firebase_get("settings/weboff") or False
+    
+    keyboard = [
+        [InlineKeyboardButton(
+            "🔴 MATIKAN" if current else "🟢 AKTIFKAN",
+            callback_data="adm_toggle_weboff"
+        )],
+        [InlineKeyboardButton("⬅️ KEMBALI", callback_data="adm_back")]
+    ]
+    
+    await query.edit_message_text(
+        f"🚫 *MODE WEB OFF*\n\n"
+        f"Status: *{'ON' if current else 'OFF'}*\n\n"
+        f"Kalo ON, web bakal nampilin 'Website Sedang Offline'.\n"
+        f"Owner tetep bisa akses.",
+        parse_mode='Markdown',
+        reply_markup=InlineKeyboardMarkup(keyboard)
+    )
+
+async def admin_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    
+    if query.from_user.id != ADMIN_TELEGRAM_ID:
+        return
+    
+    stats = get_stats()
+    
+    await query.edit_message_text(
+        f"📊 *STATISTIK BIMZZ STORE*\n\n"
+        f"📦 Total Produk: {stats['products']}\n"
+        f"👥 Total User: {stats['users']}\n"
+        f"🛒 Total Order: {stats['orders']}\n"
+        f"⭐ Total Ulasan: {stats['reviews']}\n",
+        parse_mode='Markdown',
+        reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton("🔄 REFRESH", callback_data="adm_stats")],
+            [InlineKeyboardButton("⬅️ KEMBALI", callback_data="adm_back")]
+        ])
+    )
+
+async def admin_promo(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    
+    if query.from_user.id != ADMIN_TELEGRAM_ID:
+        return
+    
+    promos = firebase_get('promo') or {}
+    
+    msg = "🎫 *KELOLA PROMO*\n\n"
+    if promos:
+        for code, p in promos.items():
+            status = "✅" if p.get('active') else "❌"
+            msg += f"{status} *{code}* - {p.get('discount')}{'%' if p.get('type') == 'percent' else ' Rp'}\n"
+    else:
+        msg += "Belum ada kode promo.\n"
+    
+    msg += f"\nBuka web buat kelola promo:\n{get_web_store_url()}"
+    
+    await query.edit_message_text(
+        msg,
+        parse_mode='Markdown',
+        reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton("🌐 BUKA WEB", url=get_web_store_url())],
+            [InlineKeyboardButton("⬅️ KEMBALI", callback_data="adm_back")]
+        ])
+    )
+
+async def admin_qris(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    
+    if query.from_user.id != ADMIN_TELEGRAM_ID:
+        return
+    
+    await query.edit_message_text(
+        "📸 *GANTI QRIS*\n\n"
+        "Kirim FOTO QRIS baru di chat ini.\n"
+        "Bot bakal otomatis simpen & pake buat pembayaran.",
+        parse_mode='Markdown',
+        reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton("⬅️ KEMBALI", callback_data="adm_back")]
+        ])
+    )
+
+async def admin_save_qris(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    
+    if user_id != ADMIN_TELEGRAM_ID:
+        return
+    
+    if not update.message.photo:
+        return
+    
+    photo_file_id = update.message.photo[-1].file_id
+    
+    # Dapetin file URL dari Telegram
+    try:
+        file_info = await context.bot.get_file(photo_file_id)
+        file_url = file_info.file_path
+        # Simpen file_id ke Firebase (nanti bot kirim ulang pake file_id)
+        firebase_set("settings/qris_file_id", photo_file_id)
+        
+        await update.message.reply_text(
+            "✅ *QRIS BARU DISIMPAN!*\n\n"
+            "Bot bakal pake QRIS ini buat pembayaran otomatis.",
+            parse_mode='Markdown'
+        )
+    except Exception as e:
+        logger.error(f"Gagal save QRIS: {e}")
+        await update.message.reply_text("❌ Gagal simpen QRIS!")
+
+# ============================================================
+# HANDLE CALLBACK ADMIN TOGGLE
+# ============================================================
+async def admin_toggle_maintenance(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    
+    if query.from_user.id != ADMIN_TELEGRAM_ID:
+        return
+    
+    current = firebase_get("settings/maintenance") or False
+    new_val = not current
+    firebase_set("settings/maintenance", new_val)
+    
+    await query.edit_message_text(
+        f"✅ *MAINTENANCE: {'ON' if new_val else 'OFF'}*",
+        parse_mode='Markdown',
+        reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton("⬅️ KEMBALI", callback_data="adm_maintenance")]
+        ])
+    )
+
+async def admin_toggle_weboff(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    
+    if query.from_user.id != ADMIN_TELEGRAM_ID:
+        return
+    
+    current = firebase_get("settings/weboff") or False
+    new_val = not current
+    firebase_set("settings/weboff", new_val)
+    
+    await query.edit_message_text(
+        f"✅ *WEB OFF: {'ON' if new_val else 'OFF'}*",
+        parse_mode='Markdown',
+        reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton("⬅️ KEMBALI", callback_data="adm_weboff")]
+        ])
+    )
+
+async def admin_back(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    
+    stats = get_stats()
+    keyboard = [
+        [InlineKeyboardButton("📦 KELOLA PRODUK", callback_data="adm_produk")],
+        [InlineKeyboardButton("👥 KELOLA USER", callback_data="adm_user")],
+        [InlineKeyboardButton("📊 STATISTIK", callback_data="adm_stats")],
+        [InlineKeyboardButton("🔧 MAINTENANCE", callback_data="adm_maintenance")],
+        [InlineKeyboardButton("🚫 WEB OFF", callback_data="adm_weboff")],
+        [InlineKeyboardButton("🎫 KELOLA PROMO", callback_data="adm_promo")],
+        [InlineKeyboardButton("📸 GANTI QRIS", callback_data="adm_qris")],
+        [InlineKeyboardButton("❌ TUTUP", callback_data="adm_close")]
+    ]
+    
+    await query.edit_message_text(
+        f"👑 *OWNER PANEL - BIMZZ STORE*\n\n"
+        f"📦 Total Produk: {stats['products']}\n"
+        f"👥 Total User: {stats['users']}\n"
+        f"🛒 Total Order: {stats['orders']}\n"
+        f"⭐ Total Ulasan: {stats['reviews']}\n\n"
+        f"PILIH MENU:",
+        parse_mode='Markdown',
+        reply_markup=InlineKeyboardMarkup(keyboard)
+    )
+
+async def admin_close(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    await query.edit_message_text("❌ Owner Panel ditutup.")
+
+# ============================================================
+# HANDLE CALLBACK ORDER (4 TOMBOL)
+# ============================================================
+async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    
+    # ===== ADMIN CALLBACKS =====
+    if query.data == "adm_produk":
+        await admin_produk(update, context); return
+    if query.data == "adm_user":
+        await admin_user(update, context); return
+    if query.data == "adm_stats":
+        await admin_stats(update, context); return
+    if query.data == "adm_maintenance":
+        await admin_maintenance(update, context); return
+    if query.data == "adm_weboff":
+        await admin_weboff(update, context); return
+    if query.data == "adm_promo":
+        await admin_promo(update, context); return
+    if query.data == "adm_qris":
+        await admin_qris(update, context); return
+    if query.data == "adm_toggle_maint":
+        await admin_toggle_maintenance(update, context); return
+    if query.data == "adm_toggle_weboff":
+        await admin_toggle_weboff(update, context); return
+    if query.data == "adm_back":
+        await admin_back(update, context); return
+    if query.data == "adm_close":
+        await admin_close(update, context); return
+    if query.data.startswith("adm_viewprod_"):
+        await admin_view_produk(update, context); return
+    if query.data.startswith("adm_delprod_"):
+        product_key = query.data.replace("adm_delprod_", "")
+        firebase_delete(f'products/{product_key}')
+        await query.answer("✅ Produk dihapus!")
+        await admin_produk(update, context); return
+    
+    # ===== MENU CALLBACKS =====
+    if query.data == "menu_order":
+        await query.answer()
+        await order_start(update, context); return
+    if query.data == "menu_produk":
+        await query.answer()
+        await produk(update, context); return
+    if query.data == "menu_promo":
+        await query.answer()
+        await promo(update, context); return
+    if query.data == "menu_help":
+        await query.answer()
+        await help_command(update, context); return
+    
+    # ===== ORDER CALLBACKS =====
+    if query.data == "order_cancel":
+        await query.answer()
+        await query.edit_message_text("❌ Order dibatalkan.")
+        return
+    
+    # ===== ORDER NOTIF CALLBACKS =====
+    await query.answer()
+    
+    data = query.data
+    if '_' not in data:
+        return
+    
+    action, order_id = data.split('_', 1)
+    logger.info(f"Callback: action={action}, order={order_id}")
+    
+    # TOMBOL 1: DANA MASUK
+    if action == 'paid':
+        try:
+            update_order_status(order_id, "paid")
+            order_data = get_order(order_id)
+            
+            if order_data:
+                # Kirim APK otomatis ke target
+                target_chat_id = order_data.get('telegram_user_id')
+                product_key = order_data.get('produkId')
+                product = get_product_by_key(product_key)
+                apk_link = product.get('apkLink') if product else None
+                
+                if target_chat_id and apk_link:
+                    try:
+                        # Coba kirim sebagai document (kalo < 50MB)
+                        await context.bot.send_document(
+                            chat_id=target_chat_id,
+                            document=apk_link,
+                            caption=f"✅ *PEMBAYARAN DIKONFIRMASI!*\n\n"
+                                    f"💀 Produk: {order_data.get('produk')}\n"
+                                    f"📅 Paket: {order_data.get('paket')}\n"
+                                    f"👤 Username: `{order_data.get('username')}`\n"
+                                    f"🔑 Password: `{order_data.get('password')}`\n\n"
+                                    f"⬇️ *DOWNLOAD APK DI ATAS*\n\n"
+                                    f"Kalo file gak bisa didownload, buka web:\n{get_web_store_url()}",
+                            parse_mode='Markdown'
+                        )
+                    except Exception as e:
+                        logger.warning(f"Gagal kirim file, kirim link aja: {e}")
+                        await context.bot.send_message(
+                            chat_id=target_chat_id,
+                            text=f"✅ *PEMBAYARAN DIKONFIRMASI!*\n\n"
+                                 f"💀 Produk: {order_data.get('produk')}\n"
+                                 f"📅 Paket: {order_data.get('paket')}\n"
+                                 f"👤 Username: `{order_data.get('username')}`\n"
+                                 f"🔑 Password: `{order_data.get('password')}`\n\n"
+                                 f"⬇️ *DOWNLOAD APK:*\n{apk_link}",
+                            parse_mode='Markdown'
+                        )
+                
+                notif_owner = (
+                    f"✅ *ORDER DIKONFIRMASI - DANA MASUK*\n\n"
+                    f"🆔 Order ID: `{order_id}`\n"
+                    f"👤 Username: `{order_data.get('username', '')}`\n"
+                    f"💰 Total: Rp {int(order_data.get('total', 0)):,}\n\n"
+                    f"📱 APK udah dikirim ke target!"
+                )
+                await context.bot.send_message(
+                    chat_id=ADMIN_TELEGRAM_ID,
+                    text=notif_owner,
+                    parse_mode='Markdown'
+                )
+            
+            await query.edit_message_text(
+                text=query.message.text + "\n\n━━━━━━━━━━━━━━━━━━━━\n✅ *STATUS: DANA MASUK*\n📱 APK OTOMATIS DIKIRIM KE TARGET!",
+                parse_mode='Markdown',
+                reply_markup=query.message.reply_markup
+            )
+        except Exception as e:
+            logger.error(f"Error paid: {e}")
+            await query.answer(f"Error: {str(e)[:100]}")
+    
+    # TOMBOL 2: BELUM MASUK
+    elif action == 'pending':
+        try:
+            update_order_status(order_id, "pending")
+            await query.edit_message_text(
+                text=query.message.text + "\n\n━━━━━━━━━━━━━━━━━━━━\n⏳ *STATUS: BELUM MASUK*\n📱 Target nunggu konfirmasi!",
+                parse_mode='Markdown',
+                reply_markup=query.message.reply_markup
+            )
+        except Exception as e:
+            logger.error(f"Error pending: {e}")
+    
+    # TOMBOL 3: KIRIM APK VIA BOT
+    elif action == 'sendapk':
+        try:
+            order_data = get_order(order_id)
+            if not order_data:
+                await query.answer("Order gak ketemu!")
+                return
+            
+            target_chat_id = order_data.get('telegram_user_id')
+            product_key = order_data.get('produkId')
+            product = get_product_by_key(product_key)
+            apk_link = product.get('apkLink') if product else None
+            
+            if target_chat_id and apk_link:
+                try:
+                    await context.bot.send_document(
+                        chat_id=target_chat_id,
+                        document=apk_link,
+                        caption=f"✅ *PESANAN LO UDAH SIAP!*\n\n"
+                                f"💀 Produk: {order_data.get('produk')}\n"
+                                f"👤 Username: `{order_data.get('username')}`\n"
+                                f"🔑 Password: `{order_data.get('password')}`",
+                        parse_mode='Markdown'
+                    )
+                    await query.answer("✅ APK terkirim ke target!")
+                except Exception as e:
+                    await context.bot.send_message(
+                        chat_id=target_chat_id,
+                        text=f"✅ *PESANAN LO UDAH SIAP!*\n\n⬇️ Download APK:\n{apk_link}",
+                        parse_mode='Markdown'
+                    )
+                    await query.answer("✅ Link APK terkirim!")
+            else:
+                await query.answer("❌ Target gak punya Telegram / APK gak ada!")
+        except Exception as e:
+            logger.error(f"Error sendapk: {e}")
+    
+    # TOMBOL 4: HAPUS ORDER
+    elif action == 'delorder':
+        try:
+            firebase_delete(f'orders/{order_id}')
+            await query.edit_message_text("🗑️ Order dihapus!")
+        except Exception as e:
+            logger.error(f"Error delorder: {e}")
+
+# ============================================================
+# HANDLER PESAN BIASA (AI CHAT + ADMIN UPLOAD QRIS)
+# ============================================================
+async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    user_id = user.id
+    user_message = update.message.text
+    
+    # Cek kalo Admin upload QRIS
+    if user_id == ADMIN_TELEGRAM_ID and update.message.photo:
+        await admin_save_qris(update, context)
+        return
+    
+    if not user_message:
+        return
+    
+    logger.info(f"User {user_id} ({user.first_name}): {user_message}")
+    await update.message.chat.send_action(action="typing")
+    
+    bot_reply = call_groq(user_id, user_message)
+    
+    if "forward ke admin" in bot_reply.lower() or "gak tau" in bot_reply.lower():
+        try:
+            admin_msg = f"🚨 *PESAN DARI TARGET*\n\n"
+            admin_msg += f"👤 Nama: {user.first_name}\n"
+            admin_msg += f"🆔 User ID: `{user_id}`\n"
+            admin_msg += f"💬 Pesan: {user_message}\n\n"
+            admin_msg += f"🤖 Bot jawab: {bot_reply}"
+            await context.bot.send_message(chat_id=ADMIN_TELEGRAM_ID, text=admin_msg, parse_mode='Markdown')
+        except Exception as e:
+            logger.error(f"Gagal forward: {e}")
+    
+    try:
+        await update.message.reply_text(bot_reply, parse_mode='Markdown')
+    except Exception:
+        await update.message.reply_text(bot_reply)
+
+# ============================================================
+# MAIN
+# ============================================================
+def main():
+    logger.info("🤖 Starting BIMZZ Store AI Bot v2.0...")
+    logger.info(f"Firebase URL: {FIREBASE_DB_URL}")
+    
+    if not TELEGRAM_TOKEN:
+        logger.error("❌ TELEGRAM_TOKEN gak ada! Cek GitHub Secrets.")
+        return
+    
+    if not GROQ_API_KEY:
+        logger.warning("⚠️ GROQ_API_KEY gak ada! Bot bakal error.")
+    
+    test = firebase_get('products')
+    if test is not None:
+        logger.info(f"✅ Firebase connected! Products: {len(test) if test else 0}")
+    else:
+        logger.warning("⚠️ Firebase REST API gak keakses! Cek Firebase Rules.")
+    
+    app = Application.builder().token(TELEGRAM_TOKEN).build()
+    
+    # Conversation handler buat ORDER
+    order_conv = ConversationHandler(
+        entry_points=[
+            CommandHandler("order", order_start),
+            CallbackQueryHandler(order_start, pattern="^menu_order$")
+        ],
+        states={
+            PILIH_PRODUK: [CallbackQueryHandler(order_pilih_produk, pattern="^order_(prod_|cancel)")],
+            PILIH_PAKET: [CallbackQueryHandler(order_pilih_paket, pattern="^order_(price_|cancel)")],
+            INPUT_USERNAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, order_input_username)],
+            INPUT_PASSWORD: [MessageHandler(filters.TEXT & ~filters.COMMAND, order_input_password)],
+            INPUT_WA: [MessageHandler(filters.TEXT & ~filters.COMMAND, order_input_wa)],
+            UPLOAD_BUKTI: [MessageHandler(filters.PHOTO, order_upload_bukti)],
+        },
+        fallbacks=[
+            CommandHandler("cancel", order_cancel),
+            CommandHandler("start", order_cancel),
+        ],
+        per_user=True,
+        per_chat=True,
+    )
+    
+    app.add_handler(order_conv)
+    
+    # Commands
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("menu", menu))
+    app.add_handler(CommandHandler("produk", produk))
+    app.add_handler(CommandHandler("promo", promo))
+    app.add_handler(CommandHandler("admin", admin_cmd))
+    app.add_handler(CommandHandler("admin_panel", admin_panel))
+    app.add_handler(CommandHandler("help", help_command))
+    
+    # Callback handler (admin + order notif)
+    app.add_handler(CallbackQueryHandler(handle_callback))
+    
+    # Message handler (AI chat)
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+    
+    # Photo handler (admin upload QRIS)
+    app.add_handler(MessageHandler(filters.PHOTO, admin_save_qris))
+    
+    logger.info("✅ Bot v2.0 aktif! Chat di @BIMZZ_Store_AI_bot")
+    app.run_polling(allowed_updates=Update.ALL_TYPES)
+
+if __name__ == '__main__':
+    main()
