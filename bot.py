@@ -15,14 +15,14 @@ from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters, ContextTypes
 
 # ============================================================
-# KONFIGURASI
+# KONFIGURASI (PAKE ENV VARIABLE - AMAN BUAT PUBLIC)
 # ============================================================
-TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN", "8746718198:AAGsieaMiKkarPirHR8Aztg2aqxNV7F4YVo")
-GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "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")
+TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN", "")
+GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "")
 ADMIN_TELEGRAM_ID = os.environ.get("ADMIN_TELEGRAM_ID", "8138527737")
 FIREBASE_DB_URL = os.environ.get("FIREBASE_DB_URL", "https://bimzz-store-default-rtdb.asia-southeast1.firebasedatabase.app")
 
-# Default Web Store URL (bakal di-override dari Firebase settings/links)
+# Default Web Store URL
 WEB_STORE_URL = "https://bimzz-store-tipe-x-tr.vercel.app/"
 
 GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions"
@@ -38,7 +38,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # ============================================================
-# FUNGSI FIREBASE REST
+# FIREBASE REST API
 # ============================================================
 def firebase_get(path):
     try:
@@ -61,7 +61,6 @@ def firebase_set(path, data):
         return False
 
 def get_web_store_url():
-    """Ambil link web dari Firebase settings"""
     data = firebase_get("settings/links/web")
     if data and isinstance(data, str):
         return data
@@ -94,7 +93,7 @@ def update_order_status(order_id, status):
     return firebase_set(f'orders/{order_id}/status', status)
 
 # ============================================================
-# DUMMY HTTP SERVER (buat Render/Koyeb yang butuh port)
+# DUMMY HTTP SERVER
 # ============================================================
 class DummyHandler(BaseHTTPRequestHandler):
     def do_GET(self):
@@ -151,7 +150,7 @@ KELEBIHAN PRODUK KAMI:
 """
 
 # ============================================================
-# HISTORY CHAT PER USER
+# HISTORY CHAT
 # ============================================================
 user_histories = {}
 
@@ -167,9 +166,12 @@ def add_to_history(user_id, role, content):
         user_histories[user_id] = history[-20:]
 
 # ============================================================
-# GROQ API CALL
+# GROQ API
 # ============================================================
 def call_groq(user_id, user_message):
+    if not GROQ_API_KEY:
+        return "Maaf kak, AI lagi error 😔 Coba chat admin langsung ya."
+    
     history = get_user_history(user_id)
     history.append({"role": "user", "content": user_message})
     
@@ -307,7 +309,7 @@ async def admin_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "👤 *Chat Admin Langsung:*\n\n"
         "📱 Telegram: @BIMZZZZZZZZZZZZ\n"
-        "💬 WhatsApp: +62 8xx-xxxx-xxxx\n\n"
+        "💬 WhatsApp: +62 895-4052-92836\n\n"
         "Kalo urgent, langsung chat aja ya kak! 🔥",
         parse_mode='Markdown'
     )
@@ -333,10 +335,9 @@ Langsung ketik aja, saya jawab otomatis! 🤖"""
     await update.message.reply_text(msg, parse_mode='Markdown')
 
 # ============================================================
-# HANDLER CALLBACK - 4 TOMBOL NOTIF ORDER
+# HANDLE CALLBACK - 4 TOMBOL NOTIF ORDER
 # ============================================================
 async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle klik tombol dari notif order"""
     query = update.callback_query
     await query.answer()
     
@@ -346,17 +347,15 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     
     action, order_id = data.split('_', 1)
-    
     logger.info(f"Callback: action={action}, order={order_id}")
     
-    # ===== TOMBOL 1: DANA MASUK =====
+    # TOMBOL 1: DANA MASUK
     if action == 'paid':
         try:
             update_order_status(order_id, "paid")
             order_data = get_order(order_id)
             
             if order_data:
-                # Notif ke LO
                 notif_owner = (
                     f"✅ *ORDER DIKONFIRMASI - DANA MASUK*\n\n"
                     f"🆔 Order ID: `{order_id}`\n"
@@ -365,7 +364,6 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     f"📱 Target bakal dapet link download di web!\n"
                     f"⏱️ Auto-refresh 10 detik"
                 )
-                
                 await context.bot.send_message(
                     chat_id=ADMIN_TELEGRAM_ID,
                     text=notif_owner,
@@ -381,11 +379,10 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             logger.error(f"Error paid: {e}")
             await query.answer(f"Error: {str(e)[:100]}")
     
-    # ===== TOMBOL 2: BELUM MASUK =====
+    # TOMBOL 2: BELUM MASUK
     elif action == 'pending':
         try:
             update_order_status(order_id, "pending")
-            
             await query.edit_message_text(
                 text=query.message.text + "\n\n━━━━━━━━━━━━━━━━━━━━\n⏳ *STATUS: BELUM MASUK*\n📱 Target nunggu konfirmasi!",
                 parse_mode='Markdown',
@@ -395,11 +392,10 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             logger.error(f"Error pending: {e}")
             await query.answer(f"Error: {str(e)[:100]}")
     
-    # ===== TOMBOL 4: KIRIM VIA BOT =====
+    # TOMBOL 4: KIRIM VIA BOT
     elif action == 'sendbot':
         try:
             order_data = get_order(order_id)
-            
             if not order_data:
                 await query.answer("Order gak ketemu!")
                 return
@@ -408,7 +404,6 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             username = order_data.get('username', '')
             produk = order_data.get('produk', '')
             tg_user = order_data.get('telegram', '')
-            
             web_url = get_web_store_url()
             
             pesan_lo = (
@@ -484,6 +479,13 @@ def main():
     logger.info("🤖 Starting BIMZZ Store AI Bot...")
     logger.info(f"Firebase URL: {FIREBASE_DB_URL}")
     
+    if not TELEGRAM_TOKEN:
+        logger.error("❌ TELEGRAM_TOKEN gak ada! Cek GitHub Secrets.")
+        return
+    
+    if not GROQ_API_KEY:
+        logger.warning("⚠️ GROQ_API_KEY gak ada! Bot bakal error.")
+    
     test = firebase_get('products')
     if test is not None:
         logger.info(f"✅ Firebase connected! Products: {len(test) if test else 0}")
@@ -492,18 +494,13 @@ def main():
     
     app = Application.builder().token(TELEGRAM_TOKEN).build()
     
-    # Commands
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("menu", menu))
     app.add_handler(CommandHandler("produk", produk))
     app.add_handler(CommandHandler("promo", promo))
     app.add_handler(CommandHandler("admin", admin_cmd))
     app.add_handler(CommandHandler("help", help_command))
-    
-    # Callback untuk 4 tombol
     app.add_handler(CallbackQueryHandler(handle_callback))
-    
-    # Message handler
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     
     logger.info("✅ Bot aktif! Chat di @BIMZZ_Store_AI_bot")
